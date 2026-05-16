@@ -230,9 +230,10 @@ if df is not None:
                 "FECHA": st.column_config.DateColumn(format="DD/MM/YYYY"),
                 "MONTO ORIG": st.column_config.NumberColumn(format="$ %.2f"),
                 "TASA": st.column_config.NumberColumn(format="%.4f"),
-                "% ADMIN": st.column_config.NumberColumn(format="%.0f%%"),
-                "ESTADO": st.column_config.SelectboxColumn(options=["PAGADO", "POR PAGAR"]),
-                "FORMA DE PAGO": st.column_config.SelectboxColumn(options=["TRANSFERENCIA BANCARIA", "EFECTIVO", "ZELLE", "OTROS"]),
+                # Quitamos los Selectbox restrictivos para que el pegado sea más fluido
+                "% ADMIN": st.column_config.TextColumn(help="Ingresa solo el número (ej: 15)"),
+                "ESTADO": st.column_config.TextColumn(help="PAGADO o POR PAGAR"),
+                "FORMA DE PAGO": st.column_config.TextColumn(help="TRANSFERENCIA BANCARIA, EFECTIVO, etc."),
             }
         )
         
@@ -244,17 +245,26 @@ if df is not None:
                     new_rows['FECHA'] = pd.to_datetime(new_rows['FECHA'], errors='coerce')
                     new_rows = new_rows.dropna(subset=['FECHA'])
                     
-                    # 2. Cálculos Financieros
+                    # 2. Cálculos y Valores por Defecto
                     new_rows['MONTO ORIG'] = pd.to_numeric(new_rows['MONTO ORIG'], errors='coerce').fillna(0)
                     new_rows['TASA'] = pd.to_numeric(new_rows['TASA'], errors='coerce').fillna(1)
+                    
+                    # Manejo de % ADMIN (Default 15%)
+                    new_rows['% ADMIN'] = new_rows['% ADMIN'].astype(str).str.replace('%', '').replace('nan', '')
                     new_rows['% ADMIN'] = pd.to_numeric(new_rows['% ADMIN'], errors='coerce').fillna(15)
+                    
+                    # Manejo de ESTADO (Default PAGADO)
+                    new_rows['ESTADO'] = new_rows['ESTADO'].fillna('').replace('', 'PAGADO').str.upper()
+                    
+                    # Manejo de FORMA DE PAGO (Default TRANSFERENCIA BANCARIA)
+                    new_rows['FORMA DE PAGO'] = new_rows['FORMA DE PAGO'].fillna('').replace('', 'TRANSFERENCIA BANCARIA').str.upper()
                     
                     new_rows['MONTO BASE USD'] = new_rows['MONTO ORIG'] / new_rows['TASA']
                     new_rows['HONORARIOS'] = new_rows['MONTO BASE USD'] * (new_rows['% ADMIN'] / 100)
                     new_rows['COSTO TOTAL'] = new_rows['MONTO BASE USD'] + new_rows['HONORARIOS']
                     
-                    # MONTO PAGADO: Si está pagado, es el monto base (según lógica de este CSV)
-                    new_rows['MONTO PAGADO'] = new_rows.apply(lambda r: r['MONTO BASE USD'] if r['ESTADO'] == 'PAGADO' else 0, axis=1)
+                    # MONTO PAGADO: Si está pagado, es el monto base
+                    new_rows['MONTO PAGADO'] = new_rows.apply(lambda r: r['MONTO BASE USD'] if 'PAGADO' in r['ESTADO'] else 0, axis=1)
                     new_rows['SALDO PENDIENTE'] = new_rows['MONTO BASE USD'] - new_rows['MONTO PAGADO']
                     
                     # 3. Campos Automáticos
