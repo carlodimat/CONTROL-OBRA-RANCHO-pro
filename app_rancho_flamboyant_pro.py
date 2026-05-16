@@ -213,64 +213,75 @@ if df is not None:
         st.dataframe(df_ingresos.sort_values('FECHA', ascending=False), use_container_width=True)
 
     with t5:
-        st.subheader("🚀 Migrador Mágico: Carga Masiva desde Excel")
+        st.subheader("🚀 Carga de Gastos: Pegar desde Excel")
         st.markdown("""
         1. Copia tus datos desde Excel (sin encabezados).
-        2. El orden de columnas debe ser: **FECHA | CLASE | TIPO | AREA | PROVEEDOR | DESCRIPCION | MONTO ORIG | TASA | % ADMIN | EMPRESA | OBRA**
-        3. Pega los datos abajo (Ctrl+V).
+        2. Orden: **FECHA | TIPO | AREA | PROVEEDOR | DESCRIPCION | MONTO ORIG | TASA | % ADMIN | ESTADO | FORMA DE PAGO**
+        3. Pega abajo (Ctrl+V). *Estado debe ser 'PAGADO' o 'POR PAGAR'.*
         """)
         
-        # Plantilla vacía para el editor
         template = pd.DataFrame(columns=[
-            'FECHA', 'CLASE', 'TIPO', 'AREA', 'PROVEEDOR', 'DESCRIPCION', 'MONTO ORIG', 'TASA', '% ADMIN', 'EMPRESA', 'OBRA'
+            'FECHA', 'TIPO', 'AREA', 'PROVEEDOR', 'DESCRIPCION', 'MONTO ORIG', 'TASA', '% ADMIN', 'ESTADO', 'FORMA DE PAGO'
         ])
         
-        # Editor de datos
         edited_df = st.data_editor(
-            template,
-            num_rows="dynamic",
-            use_container_width=True,
+            template, num_rows="dynamic", use_container_width=True,
             column_config={
-                "CLASE": st.column_config.SelectboxColumn(options=["GASTO", "INGRESO"]),
-                "FECHA": st.column_config.DateColumn(),
+                "FECHA": st.column_config.DateColumn(format="DD/MM/YYYY"),
                 "MONTO ORIG": st.column_config.NumberColumn(format="$ %.2f"),
                 "TASA": st.column_config.NumberColumn(format="%.4f"),
-                "% ADMIN": st.column_config.NumberColumn(format="%.2f%%"),
+                "% ADMIN": st.column_config.NumberColumn(format="%.0f%%"),
+                "ESTADO": st.column_config.SelectboxColumn(options=["PAGADO", "POR PAGAR"]),
+                "FORMA DE PAGO": st.column_config.SelectboxColumn(options=["TRANSFERENCIA BANCARIA", "EFECTIVO", "ZELLE", "OTROS"]),
             }
         )
         
-        if st.button("💾 Procesar y Guardar en " + active_csv):
+        if st.button("💾 Procesar y Guardar Gastos"):
             if not edited_df.empty:
                 try:
-                    # Validar y Limpiar
                     new_rows = edited_df.copy()
-                    new_rows['FECHA'] = pd.to_datetime(new_rows['FECHA'])
-                    new_rows['MONTO ORIG'] = pd.to_numeric(new_rows['MONTO ORIG'])
-                    new_rows['TASA'] = pd.to_numeric(new_rows['TASA'])
-                    new_rows['% ADMIN'] = pd.to_numeric(new_rows['% ADMIN'])
+                    # 1. Limpieza de Fechas
+                    new_rows['FECHA'] = pd.to_datetime(new_rows['FECHA'], errors='coerce')
+                    new_rows = new_rows.dropna(subset=['FECHA'])
                     
-                    # Cálculos automáticos
+                    # 2. Cálculos Financieros
+                    new_rows['MONTO ORIG'] = pd.to_numeric(new_rows['MONTO ORIG'], errors='coerce').fillna(0)
+                    new_rows['TASA'] = pd.to_numeric(new_rows['TASA'], errors='coerce').fillna(1)
+                    new_rows['% ADMIN'] = pd.to_numeric(new_rows['% ADMIN'], errors='coerce').fillna(15)
+                    
                     new_rows['MONTO BASE USD'] = new_rows['MONTO ORIG'] / new_rows['TASA']
                     new_rows['HONORARIOS'] = new_rows['MONTO BASE USD'] * (new_rows['% ADMIN'] / 100)
                     new_rows['COSTO TOTAL'] = new_rows['MONTO BASE USD'] + new_rows['HONORARIOS']
-                    new_rows['MONTO PAGADO'] = new_rows['MONTO BASE USD'] # Asunción por defecto
                     
-                    # Asegurar que todas las columnas del CSV original existan
-                    for col in df.columns:
+                    # MONTO PAGADO: Si está pagado, es el monto base (según lógica de este CSV)
+                    new_rows['MONTO PAGADO'] = new_rows.apply(lambda r: r['MONTO BASE USD'] if r['ESTADO'] == 'PAGADO' else 0, axis=1)
+                    new_rows['SALDO PENDIENTE'] = new_rows['MONTO BASE USD'] - new_rows['MONTO PAGADO']
+                    
+                    # 3. Campos Automáticos
+                    new_rows['CLASE'] = 'GASTO'
+                    new_rows['MES'] = new_rows['FECHA'].dt.strftime('%Y-%m')
+                    new_rows['SEMANA'] = new_rows['FECHA'].dt.strftime('%Y-S%V')
+                    new_rows['EMPRESA'] = empresa_default
+                    new_rows['OBRA'] = obra_default
+                    new_rows['MONEDA'] = 'USD'
+                    
+                    # 4. Asegurar todas las columnas del CSV original en el orden correcto
+                    csv_cols = list(df.columns)
+                    for col in csv_cols:
                         if col not in new_rows.columns:
-                            new_rows[col] = 0
+                            new_rows[col] = ""
                     
-                    # Concatenar y guardar
-                    updated_df = pd.concat([df, new_rows[df.columns]], ignore_index=True)
+                    # Concatenar manteniendo el orden de columnas del original
+                    updated_df = pd.concat([df, new_rows[csv_cols]], ignore_index=True)
                     updated_df.to_csv(active_csv, index=False)
                     
-                    st.success(f"✅ ¡{len(new_rows)} registros añadidos exitosamente!")
+                    st.success(f"✅ ¡{len(new_rows)} gastos añadidos exitosamente!")
                     st.balloons()
                     st.rerun()
                 except Exception as e:
-                    st.error(f"❌ Error al procesar datos: {e}")
+                    st.error(f"❌ Error al procesar: {e}")
             else:
-                st.warning("⚠️ No hay datos para procesar. Pega información en la tabla arriba.")
+                st.warning("⚠️ No hay datos para procesar.")
 
 else:
     st.error("No se pudieron cargar los datos.")
