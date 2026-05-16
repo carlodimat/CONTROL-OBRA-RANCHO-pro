@@ -216,12 +216,12 @@ if df is not None:
         st.subheader("🚀 Carga de Gastos: Pegar desde Excel")
         st.markdown("""
         1. Copia tus datos desde Excel (sin encabezados).
-        2. Orden: **FECHA | TIPO | AREA | PROVEEDOR | DESCRIPCION | MONTO ORIG | TASA | % ADMIN | ESTADO | FORMA DE PAGO**
+        2. Orden: **FECHA | TIPO | AREA | PROVEEDOR | DESCRIPCION | MONTO ORIG | TASA | % ADMIN | ADMIN. DELEGADA | ESTADO | FORMA DE PAGO**
         3. Pega abajo (Ctrl+V). *Estado debe ser 'PAGADO' o 'POR PAGAR'.*
         """)
         
         template = pd.DataFrame(columns=[
-            'FECHA', 'TIPO', 'AREA', 'PROVEEDOR', 'DESCRIPCION', 'MONTO ORIG', 'TASA', '% ADMIN', 'ESTADO', 'FORMA DE PAGO'
+            'FECHA', 'TIPO', 'AREA', 'PROVEEDOR', 'DESCRIPCION', 'MONTO ORIG', 'TASA', '% ADMIN', 'HONORARIOS', 'ESTADO', 'FORMA DE PAGO'
         ])
         
         edited_df = st.data_editor(
@@ -230,8 +230,8 @@ if df is not None:
                 "FECHA": st.column_config.DateColumn(format="DD/MM/YYYY"),
                 "MONTO ORIG": st.column_config.NumberColumn(format="$ %.2f"),
                 "TASA": st.column_config.NumberColumn(format="%.4f"),
-                # Quitamos los Selectbox restrictivos para que el pegado sea más fluido
                 "% ADMIN": st.column_config.TextColumn(help="Ingresa solo el número (ej: 15)"),
+                "HONORARIOS": st.column_config.NumberColumn("ADMIN. DELEGADA", format="$ %.2f"),
                 "ESTADO": st.column_config.TextColumn(help="PAGADO o POR PAGAR"),
                 "FORMA DE PAGO": st.column_config.TextColumn(help="TRANSFERENCIA BANCARIA, EFECTIVO, etc."),
             }
@@ -260,7 +260,12 @@ if df is not None:
                     new_rows['FORMA DE PAGO'] = new_rows['FORMA DE PAGO'].fillna('').replace('', 'TRANSFERENCIA BANCARIA').str.upper()
                     
                     new_rows['MONTO BASE USD'] = new_rows['MONTO ORIG'] / new_rows['TASA']
-                    new_rows['HONORARIOS'] = new_rows['MONTO BASE USD'] * (new_rows['% ADMIN'] / 100)
+                    
+                    # Usar HONORARIOS pegado o calcular si está vacío
+                    new_rows['HONORARIOS'] = pd.to_numeric(new_rows['HONORARIOS'], errors='coerce')
+                    calc_hon = new_rows['MONTO BASE USD'] * (new_rows['% ADMIN'] / 100)
+                    new_rows['HONORARIOS'] = new_rows['HONORARIOS'].fillna(calc_hon)
+                    
                     new_rows['COSTO TOTAL'] = new_rows['MONTO BASE USD'] + new_rows['HONORARIOS']
                     
                     # MONTO PAGADO: Si está pagado, es el monto base
