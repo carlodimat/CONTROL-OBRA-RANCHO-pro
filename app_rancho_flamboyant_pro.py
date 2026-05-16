@@ -30,11 +30,50 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ─── Funciones de Utilidad ───
+def wrap_label(text, width=18):
+    if not isinstance(text, str): return str(text)
+    words = text.split()
+    lines, current = [], []
+    for word in words:
+        if sum(len(w) for w in current) + len(current) + len(word) > width:
+            if current: lines.append(" ".join(current))
+            current = [word]
+        else: current.append(word)
+    if current: lines.append(" ".join(current))
+    return "<br>".join(lines)
+
 def create_excel(df_report):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_report.to_excel(writer, index=False, sheet_name='Reporte')
     return output.getvalue()
+
+def horizontal_bar_chart(df_plot, x_col, y_col, color_scale, title, height=500):
+    if df_plot.empty:
+        st.info("No hay datos para este gráfico.")
+        return
+    df_sorted = df_plot.sort_values(x_col, ascending=True).copy()
+    labels = [f"$ {v:,.2f}" for v in df_sorted[x_col]]
+    vals = df_sorted[x_col].values
+    max_v = vals.max() if vals.max() > 0 else 1
+    norm  = vals / max_v
+    import plotly.colors as pc
+    palette = pc.get_colorscale(color_scale)
+    bar_colors = pc.sample_colorscale(palette, norm)
+    fig = go.Figure(go.Bar(
+        x=df_sorted[x_col], y=df_sorted[y_col], orientation='h',
+        marker_color=bar_colors, text=labels, textposition='outside',
+        textfont=dict(size=11, color='#1e3a8a', family='Arial Black'),
+        cliponaxis=False,
+    ))
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14, color='#1e3a8a'), x=0.01),
+        height=height, margin=dict(l=10, r=130, t=50, b=30),
+        xaxis=dict(showticklabels=False, showgrid=False, zeroline=False, range=[0, max_v * 1.35]),
+        yaxis=dict(tickfont=dict(size=11, color='#000000'), showgrid=False),
+        plot_bgcolor='#f8fafc', paper_bgcolor='#ffffff', showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 def load_all_data():
     csv_name = "RANCHO.csv"
@@ -126,12 +165,34 @@ if df is not None:
     t1, t2, t3, t4, t5 = st.tabs(["📊 GRÁFICOS", "💸 EGRESOS", "💰 INGRESOS", "🔍 BUSCADOR", "🚀 CARGA MASIVA"])
 
     with t1:
-        # Gráficos (Lógica idéntica a versión estándar)
         st.write("### 📌 Inversión por Tipo")
         df_t = df_gastos.groupby('TIPO')['MONTO BASE USD'].sum().reset_index()
         df_t = pd.concat([df_t, pd.DataFrame({'TIPO': ['ADMINISTRACIÓN DELEGADA'], 'MONTO BASE USD': [total_honorarios]})], ignore_index=True)
-        fig_t = px.bar(df_t, x='MONTO BASE USD', y='TIPO', orientation='h', color='MONTO BASE USD', color_continuous_scale='Viridis')
-        st.plotly_chart(fig_t, use_container_width=True)
+        horizontal_bar_chart(df_t, 'MONTO BASE USD', 'TIPO', 'Viridis', '📌 Inversión total por Tipo de Gasto', height=max(350, len(df_t) * 45))
+
+        st.divider()
+        st.write("### 📐 Inversión por Área")
+        df_a = df_gastos.groupby('AREA')['MONTO BASE USD'].sum().reset_index()
+        df_a = pd.concat([df_a, pd.DataFrame({'AREA': ['ADMINISTRACIÓN DELEGADA'], 'MONTO BASE USD': [total_honorarios]})], ignore_index=True)
+        horizontal_bar_chart(df_a, 'MONTO BASE USD', 'AREA', 'Blues', '📐 Inversión total por Área de Obra', height=max(400, len(df_a) * 42))
+
+        st.divider()
+        st.write("### 👥 Top Proveedores")
+        df_p = (df_gastos.groupby('PROVEEDOR')['MONTO BASE USD'].sum().sort_values(ascending=False).head(20).reset_index())
+        df_p = pd.concat([df_p, pd.DataFrame({'PROVEEDOR': ['ADMINISTRACIÓN DELEGADA'], 'MONTO BASE USD': [total_honorarios]})], ignore_index=True)
+        horizontal_bar_chart(df_p, 'MONTO BASE USD', 'PROVEEDOR', 'Reds', '👥 Top 20 Proveedores por Gasto', height=max(500, len(df_p) * 40))
+
+        st.divider()
+        st.write("### 📅 Evolución Acumulativa")
+        fecha_inicio = df_ingresos['FECHA'].min() if not df_ingresos.empty else df_gastos_base['FECHA'].min()
+        idx_full = pd.date_range(start=fecha_inicio, end=pd.Timestamp.today(), freq='D')
+        s_gastos = (df_gastos_base.set_index('FECHA')['COSTO TOTAL'].resample('D').sum().reindex(idx_full, fill_value=0).cumsum())
+        s_ingresos = (df_ingresos.set_index('FECHA')['MONTO BASE USD'].resample('D').sum().reindex(idx_full, fill_value=0).cumsum())
+        fig_time = go.Figure()
+        fig_time.add_trace(go.Scatter(x=idx_full, y=s_ingresos, name='Ingresos', fill='tozeroy', line=dict(color='#22c55e')))
+        fig_time.add_trace(go.Scatter(x=idx_full, y=s_gastos, name='Gastos', fill='tozeroy', line=dict(color='#1e3a8a')))
+        fig_time.update_layout(height=400, margin=dict(l=10, r=10, t=30, b=30), plot_bgcolor='#f8fafc')
+        st.plotly_chart(fig_time, use_container_width=True)
 
     with t2:
         st.subheader("📝 Detalle de Gastos")
@@ -141,8 +202,11 @@ if df is not None:
         c3.metric("Admin. Delegada", f"$ {total_honorarios:,.2f}")
         c4.metric("TOTAL FILTRADO", f"$ {gasto_total_real:,.2f}")
         st.divider()
-        cols_show = [c for c in ['FECHA', 'TIPO', 'AREA', 'PROVEEDOR', 'DESCRIPCION', 'MONTO ORIG', '% ADMIN', 'HONORARIOS', 'COSTO TOTAL'] if c in df_gastos.columns]
-        st.dataframe(df_gastos[cols_show].sort_values('FECHA', ascending=False), use_container_width=True)
+        cols_show = ['FECHA', 'TIPO', 'AREA', 'PROVEEDOR', 'FORMA DE PAGO', 'DESCRIPCION', 'MONTO ORIG', '% ADMIN', 'HONORARIOS', 'COSTO TOTAL']
+        cols_show = [c for c in cols_show if c in df_gastos.columns]
+        st.dataframe(df_gastos[cols_show].sort_values('FECHA', ascending=False).style.format({
+            'MONTO ORIG': "{:,.2f}", 'HONORARIOS': "${:,.2f}", 'COSTO TOTAL': "${:,.2f}", '% ADMIN': "{:.1f}%"
+        }), use_container_width=True)
 
     with t3:
         st.subheader("💰 Detalle de Ingresos")
